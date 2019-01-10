@@ -19,14 +19,18 @@ from __future__ import division
 from __future__ import print_function
 
 import math
+from collections import defaultdict
 
 import os
 import tensorflow as tf
 import numpy as np
+import tqdm
+from colorama import Fore, Back, Style
 
 import modeling
 import optimization
 import tokenization
+from coref import metrics
 from modeling import reshape_to_matrix, attention_scores_layer
 
 flags = tf.flags
@@ -77,9 +81,9 @@ flags.DEFINE_integer("eval_batch_size", 8, "Total batch size for eval.")
 
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 
-flags.DEFINE_integer("num_train_steps", 100000, "Number of training steps.")
+flags.DEFINE_integer("num_train_steps", 15000, "Number of training steps.")
 
-flags.DEFINE_integer("num_warmup_steps", 10000, "Number of warmup steps.")
+flags.DEFINE_integer("num_warmup_steps", 100, "Number of warmup steps.")
 
 flags.DEFINE_integer("save_checkpoints_steps", 1000,
                      "How often to save the model checkpoint.")
@@ -211,7 +215,8 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
                                                        'sr': coref_metrics['mention_starts_recall'][1],
                                                        'sp': coref_metrics['mention_starts_precision'][1],
                                                        'ea': coref_metrics['mention_ends_accuracy'][1],
-                                                       'ca': coref_metrics['mention_clusters_accuracy']},
+                                                       'cr': coref_metrics['mention_clusters_recall'][1],
+                                                       'cp': coref_metrics['mention_clusters_precision'][1]},
                                                       every_n_iter=10)
 
             output_spec = tf.contrib.tpu.TPUEstimatorSpec(
@@ -221,24 +226,50 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
                 scaffold_fn=scaffold_fn,
                 training_hooks=[logging_hook])
         elif mode == tf.estimator.ModeKeys.EVAL:
+            eval_metric_ops = {'Average F1 (py)': (f, tf.no_op()),
+                               'Average precision (py)': (p, tf.no_op()),
+                               'Average recall (py)': (r, tf.no_op()),
+                               'mention_starts_recall': coref_metrics['mention_starts_recall'],
+                               'mention_starts_precision': coref_metrics['mention_starts_precision'],
+                               'mention_ends_accuracy': coref_metrics['mention_ends_accuracy'],
+                               'mention_clusters_recall': coref_metrics['mention_clusters_recall'],
+                               'mention_clusters_precision': coref_metrics['mention_clusters_precision']}
 
-            eval_metrics_ops = {'mention_starts_recall': coref_metrics['mention_starts_recall'],
-                                'mention_starts_precision': coref_metrics['mention_starts_precision'],
-                                'mention_ends_accuracy': coref_metrics['mention_ends_accuracy'],
-                                'mention_clusters_accuracy': (coref_metrics['mention_clusters_accuracy'], tf.no_op())}
             output_spec = tf.contrib.tpu.TPUEstimatorSpec(
                 mode=mode,
                 loss=total_loss,
-                eval_metrics=(lambda: eval_metrics_ops, []),
+                eval_metrics=(eval_fn, [coref_outputs['mention_starts_scores'],
+                                        coref_outputs['mention_ends_scores'],
+                                        coref_outputs['mention_clusters_scores'],
+                                        input_mask,
+                                        mention_ends_ids,
+                                        mention_clusters]),
                 scaffold_fn=scaffold_fn)
         elif mode == tf.estimator.ModeKeys.PREDICT:
-            raise NotImplementedError()
+            predictions = {
+                'pred_start_scores': coref_outputs['mention_starts_scores'],
+                'pred_end_scores': coref_outputs['mention_ends_scores'],
+                'pred_cluster_scores': coref_outputs['mention_clusters_scores'],
+                'input_mask': input_mask,
+                'gold_end_ids': mention_ends_ids,
+                'gold_clusters': mention_clusters,
+                'input_ids': input_ids,
+                # 'mention_starts_recall': coref_metrics['mention_starts_recall'][0],
+                # 'mention_starts_precision': coref_metrics['mention_starts_precision'][0],
+                # 'mention_ends_accuracy': coref_metrics['mention_ends_accuracy'][0],
+                # 'mention_clusters_recall': coref_metrics['mention_clusters_recall'][0],
+                # 'mention_clusters_precision': coref_metrics['mention_clusters_precision'][0],
+            }
+            return tf.contrib.tpu.TPUEstimatorSpec(mode=mode, predictions=predictions, scaffold_fn=scaffold_fn)
         else:
             raise ValueError("Only TRAIN, EVAL and PREDICT modes are supported: %s" % (mode))
 
         return output_spec
 
     return model_fn
+
+
+CLUSTER_THETA = 7
 
 
 def get_coref_outputs(bert_config, input_tensor, input_mask, mention_starts, mention_ends_ids, mention_ends_mask,
@@ -293,29 +324,38 @@ def get_coref_outputs(bert_config, input_tensor, input_mask, mention_starts, men
         with tf.variable_scope("clusters"):
             mention_clusters_float = tf.to_float(mention_clusters)
             # [batch_size, 1, seq_length, seq_length]
+            input_mask_2d = input_mask[:, None, :] * input_mask[:, :, None]
             mention_clusters_scores = attention_scores_layer(input_tensor_2d,
                                                              input_tensor_2d,
-                                                             # tf.expand_dims(input_mask, 1),
+                                                             input_mask_2d,
                                                              size_per_head=bert_config.hidden_size,
                                                              batch_size=batch_size,
                                                              from_seq_length=seq_length,
-                                                             to_seq_length=seq_length)
+                                                             to_seq_length=seq_length,
+                                                             query_equals_key=True)
             mention_clusters_scores = tf.squeeze(mention_clusters_scores, 1)
 
-            # per_example_cluster_size = tf.reduce_sum(mention_clusters_float, axis=[-1], keep_dims=True)
-            # mention_clusters_labels = mention_clusters_float / per_example_cluster_size
-            # mention_clusters_loss = tf.nn.softmax_cross_entropy_with_logits(labels=mention_clusters_labels,
-            #                                                                 logits=mention_clusters_scores,
-            #                                                                 name='mention_clusters_loss')
-            # mention_clusters_loss = tf.reduce_sum(mention_clusters_loss) / tf.reduce_sum(input_mask_float)
+            # # softmax loss
+            # per_example_cluster_size = tf.reduce_sum(mention_clusters_float, axis=[-1])
+            # clusters_log_probs = tf.nn.log_softmax(mention_clusters_scores)  # [B,S,S]
+            # per_example_clusters_loss = -tf.reduce_sum(
+            #     tf.boolean_mask(clusters_log_probs, mention_starts) * tf.boolean_mask(mention_clusters_float,
+            #                                                                           mention_starts),
+            #     axis=[-1]) / tf.boolean_mask(per_example_cluster_size, mention_starts)
 
-            per_example_cluster_size = tf.reduce_sum(mention_clusters_float, axis=[-1])
-            clusters_log_probs = tf.nn.log_softmax(mention_clusters_scores)  # [B,S,S]
+            # hinge loss
+            margin = 1
+            # t = tf.boolean_mask(mention_clusters_float, mention_starts) * 2 - 1
+            # y = tf.boolean_mask(mention_clusters_scores, mention_starts)
+            t = mention_clusters_float * 2 - 1
+            y = mention_clusters_scores
+            per_example_clusters_loss = tf.maximum(0., margin - (t * (y - CLUSTER_THETA)))
 
-            per_example_clusters_loss = -tf.reduce_sum(
-                tf.boolean_mask(clusters_log_probs, mention_starts) * tf.boolean_mask(mention_clusters_float,
-                                                                                      mention_starts),
-                axis=[-1]) / tf.boolean_mask(per_example_cluster_size, mention_starts)
+            # hard negative sampling
+            positive_losses = tf.boolean_mask(per_example_clusters_loss, t > 0)
+            negative_losses = tf.boolean_mask(per_example_clusters_loss, t < 0)
+            negative_losses, _ = tf.nn.top_k(negative_losses, k=tf.shape(positive_losses)[0] * 5)
+            per_example_clusters_loss = tf.concat([positive_losses, negative_losses], axis=0)
 
             mention_clusters_loss = tf.reduce_mean(per_example_clusters_loss)
 
@@ -326,7 +366,7 @@ def get_coref_outputs(bert_config, input_tensor, input_mask, mention_starts, men
                   mention_ends_loss=mention_ends_loss,
                   mention_clusters_loss=mention_clusters_loss,
                   mention_starts_scores=mention_starts_scores,
-                  mention_ends_scores=mention_ends_scores,
+                  mention_ends_scores=all_mention_ends_scores,
                   mention_clusters_scores=mention_clusters_scores)
 
     return output
@@ -346,22 +386,113 @@ def get_coref_metrics(coref_outputs, input_mask, mention_starts, mention_ends_id
                                                     weights=input_mask)
 
     mention_ends_ids = tf.boolean_mask(mention_ends_ids, mention_starts, name='mention_ends_ids')
+    mention_ends_scores = tf.boolean_mask(mention_ends_scores, mention_starts)
     mention_ends_predictions = tf.argmax(mention_ends_scores, axis=-1)
     mention_ends_accuracy = tf.metrics.accuracy(labels=mention_ends_ids,
                                                 predictions=mention_ends_predictions)
 
-    mention_clusters_predictions = tf.argmax(mention_clusters_scores, axis=-1)
-    mention_clusters_predictions_one_hot = tf.one_hot(mention_clusters_predictions, depth=FLAGS.max_seq_length)
-    mention_clusters_per_mention_correct = tf.reduce_sum(
-        mention_clusters_predictions_one_hot * tf.to_float(mention_clusters),
-        axis=-1)
-    mention_clusters_accuracy = tf.reduce_sum(mention_clusters_per_mention_correct) / tf.to_float(
-        tf.reduce_sum(mention_starts))
+    # # cluster accuracy - always 100% because it is easy to connect to yourself...
+    # mention_clusters_predictions = tf.argmax(mention_clusters_scores, axis=-1)
+    # mention_clusters_predictions_one_hot = tf.one_hot(mention_clusters_predictions, depth=FLAGS.max_seq_length)
+    # mention_clusters_per_mention_correct = tf.reduce_sum(
+    #     mention_clusters_predictions_one_hot * tf.to_float(mention_clusters),
+    #     axis=-1)
+    # mention_clusters_accuracy = tf.reduce_sum(mention_clusters_per_mention_correct) / tf.to_float(
+    #     tf.reduce_sum(mention_clusters))
+    input_mask_2d = input_mask[:, None, :] * input_mask[:, :, None]
+    mention_clusters_predictions = mention_clusters_scores > CLUSTER_THETA
+    mention_clusters_recall = tf.metrics.recall(labels=mention_clusters,
+                                                predictions=mention_clusters_predictions,
+                                                weights=input_mask_2d)
+    mention_clusters_precision = tf.metrics.precision(labels=mention_clusters,
+                                                      predictions=mention_clusters_predictions,
+                                                      weights=input_mask_2d)
 
     return dict(mention_starts_recall=mention_starts_recall,
                 mention_starts_precision=mention_starts_precision,
                 mention_ends_accuracy=mention_ends_accuracy,
-                mention_clusters_accuracy=mention_clusters_accuracy)
+                mention_clusters_recall=mention_clusters_recall,
+                mention_clusters_precision=mention_clusters_precision)
+
+
+def cluster_matrix_to_clusters(mention_end_ids, cluster_matrix):
+    clusters = []
+    mention_to_cluster = dict()
+    for i, j in zip(*np.where(cluster_matrix)):
+        mention1 = (i, mention_end_ids[i])
+        mention2 = (j, mention_end_ids[j])
+        if mention1 in mention_to_cluster and mention2 in mention_to_cluster:
+            mention_to_cluster[mention1].update(mention_to_cluster[mention2])
+            mention_to_cluster[mention2] = mention_to_cluster[mention1]
+        elif mention1 in mention_to_cluster:
+            mention_to_cluster[mention1].add(mention2)
+            mention_to_cluster[mention2] = mention_to_cluster[mention1]
+        elif mention2 in mention_to_cluster:
+            mention_to_cluster[mention2].add(mention1)
+            mention_to_cluster[mention1] = mention_to_cluster[mention2]
+        else:
+            new_cluster = {mention1, mention2}
+            mention_to_cluster[mention1] = new_cluster
+            mention_to_cluster[mention2] = new_cluster
+            clusters.append(new_cluster)
+
+    for m in mention_to_cluster:
+        mention_to_cluster[m] = tuple(mention_to_cluster[m])
+    clusters = tuple(map(tuple, clusters))
+    return clusters, mention_to_cluster
+
+
+def evaluate_coref(pred_start_scores, pred_end_scores, pred_cluster_scores, input_mask, gold_end_ids, gold_cluster_matrix, evaluator):
+    # create gold starts
+    gold_clusters, gold_mention_to_cluster = cluster_matrix_to_clusters(gold_end_ids, gold_cluster_matrix)
+
+    # create pred starts
+    pred_end_ids = pred_end_scores.argmax(-1)
+    pred_mentions_mask = pred_start_scores.argmax(-1) * input_mask
+    pred_cluster_matrix = pred_mentions_mask[..., None] * (pred_cluster_scores > CLUSTER_THETA)
+    predicted_clusters, predicted_mention_to_cluster = cluster_matrix_to_clusters(pred_end_ids, pred_cluster_matrix)
+
+    evaluator.update(predicted_clusters, gold_clusters, predicted_mention_to_cluster, gold_mention_to_cluster)
+    return gold_clusters, predicted_clusters
+
+
+FORES = [Fore.BLUE,
+         Fore.CYAN,
+         Fore.GREEN,
+         Fore.MAGENTA,
+         Fore.RED,
+         Fore.YELLOW]
+BACKS = [Back.BLUE,
+         Back.CYAN,
+         Back.GREEN,
+         Back.MAGENTA,
+         Back.RED,
+         Back.YELLOW]
+COLOR_WHEEL = FORES + [f + b for f in FORES for b in BACKS]
+
+def coref_pprint(input_ids, clusters, tokenizer):
+    starts = set([m[0] for m in set(sum(clusters, ()))])
+    start_to_cluster = {}
+    cluster_to_color = {c: i % len(COLOR_WHEEL) for i, c in enumerate(clusters)}
+    for c in clusters:
+        for m in c:
+            start_to_cluster[m[0]] = c
+    ends = set([m[1] for m in set(sum(clusters, ()))])
+    pretty_str = ''
+    for i, idx in enumerate(input_ids):
+        if idx == 0:
+            continue
+        if i in starts:
+            cluster = start_to_cluster[i]
+            cluster_color = cluster_to_color[cluster]
+            pretty_str += Style.BRIGHT + COLOR_WHEEL[cluster_color]
+
+        pretty_str += tokenizer.convert_ids_to_tokens([idx])[0] + ' '
+
+        if i in ends:
+            pretty_str += Style.RESET_ALL
+
+    print(pretty_str)
 
 
 def input_fn_builder(input_files,
@@ -396,7 +527,7 @@ def input_fn_builder(input_files,
             # `sloppy` mode means that the interleaving is not exact. This adds
             # even more randomness to the training pipeline.
             d = d.apply(
-                tf.contrib.data.parallel_interleave(
+                tf.data.experimental.parallel_interleave(
                     tf.data.TFRecordDataset,
                     sloppy=is_training,
                     cycle_length=cycle_length))
@@ -457,6 +588,9 @@ def main(_):
     tf.logging.info("*** Input Files ***")
     for input_file in input_files:
         tf.logging.info("  %s" % input_file)
+
+    tokenizer = tokenization.FullTokenizer(
+        vocab_file=FLAGS.vocab_file, do_lower_case=False)
 
     tpu_cluster_resolver = None
     if FLAGS.use_tpu and FLAGS.tpu_name:
@@ -525,9 +659,6 @@ def main(_):
         tf.logging.info("***** Running prediction *****")
         tf.logging.info("  Batch size = %d", FLAGS.eval_batch_size)
 
-        tokenizer = tokenization.FullTokenizer(
-            vocab_file=FLAGS.vocab_file, do_lower_case=True)
-
         eval_input_fn = input_fn_builder(
             input_files=input_files,
             max_seq_length=FLAGS.max_seq_length,
@@ -535,28 +666,51 @@ def main(_):
 
         predictions = estimator.predict(input_fn=eval_input_fn)
 
+        evaluator = metrics.CorefEvaluator()
+        # n = 0
+        # mention_starts_recall = 0.
+        # mention_starts_precision = 0.
+        # mention_ends_accuracy = 0.
+        # mention_clusters_recall = 0.
+        # mention_clusters_precision = 0.
         for p in predictions:
-            log_probabilities = p['log_probabilities']
-            pred = p['prediction']
-            gt = p['masked_lm_candidate_ids'][0]
+            # mention_starts_recall += p['mention_starts_recall']
+            # mention_starts_precision += p['mention_starts_precision']
+            # mention_ends_accuracy += p['mention_ends_accuracy']
+            # mention_clusters_recall += p['mention_clusters_recall']
+            # mention_clusters_precision += p['mention_clusters_precision']
+            # n += 1
+
             input_ids = p['input_ids']
+            pred_start_scores = p['pred_start_scores']
+            pred_end_scores = p['pred_end_scores']
+            pred_cluster_scores = p['pred_cluster_scores']
             input_mask = p['input_mask']
-            candidate_ids = p['masked_lm_candidates']
+            gold_end_ids = p['gold_end_ids']
+            gold_clusters_matrix = p['gold_clusters']
+            gold_clusters, predicted_clusters = evaluate_coref(pred_start_scores,
+                                                               pred_end_scores,
+                                                               pred_cluster_scores,
+                                                               input_mask,
+                                                               gold_end_ids,
+                                                               gold_clusters_matrix,
+                                                               evaluator)
+            print('GOLD CLUSTERING:', end='\t')
+            coref_pprint(input_ids, gold_clusters, tokenizer)
+            print('PREDICTED CLUSTERING:', end='\t')
+            coref_pprint(input_ids, predicted_clusters, tokenizer)
+            print('==================================================================')
+        p, r, f = evaluator.get_prf()
 
-            if pred != gt:
-                input_tokens = tokenizer.convert_ids_to_tokens(input_ids)
-                input_tokens = [t for t, m in zip(input_tokens, input_mask) if m]
-                story = ' '.join(input_tokens)
-                story = story.split(' .')
-                story = ' .\n'.join(story)
+        # print('mention_starts_recall: {:.4f}'.format(mention_starts_recall))
+        # print('mention_starts_precision: {:.4f}'.format(mention_starts_precision))
+        # print('mention_ends_accuracy: {:.4f}'.format(mention_ends_accuracy))
+        # print('mention_clusters_recall: {:.4f}'.format(mention_clusters_recall))
+        # print('mention_clusters_precision: {:.4f}'.format(mention_clusters_precision))
 
-                print('story:', story)
-
-                probabilities = [math.exp(l) for l in log_probabilities]
-                candidate_print = ', '.join(f'{c}: {p:.2f}' for c, p in zip(candidates, probabilities))
-                print('candidates:', candidate_print)
-                print('')
-
+        print("Average F1 (py): {:.2f}%".format(f * 100))
+        print("Average precision (py): {:.2f}%".format(p * 100))
+        print("Average recall (py): {:.2f}%".format(r * 100))
 
 if __name__ == "__main__":
     flags.mark_flag_as_required("input_file")

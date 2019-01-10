@@ -567,7 +567,8 @@ def attention_scores_layer(from_tensor,
                            initializer_range=0.02,
                            batch_size=None,
                            from_seq_length=None,
-                           to_seq_length=None):
+                           to_seq_length=None,
+                           query_equals_key=False):
     """Calculate multi-headed attention probabilities from `from_tensor` to `to_tensor`.
 
     This is an implementation of multi-headed attention based on "Attention
@@ -660,12 +661,15 @@ def attention_scores_layer(from_tensor,
         kernel_initializer=create_initializer(initializer_range))
 
     # `key_layer` = [B*T, N*H]
-    key_layer = tf.layers.dense(
-        to_tensor_2d,
-        num_attention_heads * size_per_head,
-        activation=key_act,
-        name="key",
-        kernel_initializer=create_initializer(initializer_range))
+    if query_equals_key:
+        key_layer = query_layer
+    else:
+        key_layer = tf.layers.dense(
+            to_tensor_2d,
+            num_attention_heads * size_per_head,
+            activation=key_act,
+            name="key",
+            kernel_initializer=create_initializer(initializer_range))
 
     # `query_layer` = [B, N, F, H]
     query_layer = transpose_for_scores(query_layer, batch_size,

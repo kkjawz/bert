@@ -54,17 +54,17 @@ def main(_):
                 dists = cluster_starts[1:] - cluster_starts[:-1]
                 mention_distances.extend(dists)
 
-    viz = Visdom(port=8097, server="http://localhost")
-    assert viz.check_connection(), 'No connection could be formed quickly'
+    # viz = Visdom(port=8097, server="http://localhost")
+    # assert viz.check_connection(), 'No connection could be formed quickly'
 
-    viz.histogram(X=n_mentions, opts=dict(numbins=200, title='n_mentions'))
-    viz.histogram(X=token_lengths, opts=dict(numbins=200, title='token_lengths'))
-    viz.histogram(X=mention_distances, opts=dict(numbins=200, title='mention_distances'))
+    # viz.histogram(X=n_mentions, opts=dict(numbins=200, title='n_mentions'))
+    # viz.histogram(X=token_lengths, opts=dict(numbins=200, title='token_lengths'))
+    # viz.histogram(X=mention_distances, opts=dict(numbins=200, title='mention_distances'))
 
     mention_distances = np.array(mention_distances)
-    print('mention_distances > 256:', (mention_distances > 200).sum() / len(mention_distances))
-    print('mention_distances > 512:', (mention_distances > 500).sum() / len(mention_distances))
-    print('mention_distances > 1024:', (mention_distances > 500).sum() / len(mention_distances))
+    print('mention_distances > 256:', (mention_distances > 256).sum() / len(mention_distances))
+    print('mention_distances > 512:', (mention_distances > 512).sum() / len(mention_distances))
+    print('mention_distances > 1024:', (mention_distances > 1024).sum() / len(mention_distances))
     print('%filtered_mentions:', n_filtered_mentions / total_mentions)
 
 
