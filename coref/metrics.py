@@ -5,6 +5,7 @@ from __future__ import print_function
 import numpy as np
 from collections import Counter
 from sklearn.utils.linear_assignment_ import linear_assignment
+from tabulate import tabulate
 
 
 def f1(p_num, p_den, r_num, r_den, beta=1):
@@ -31,6 +32,13 @@ class CorefEvaluator(object):
 
     def get_prf(self):
         return self.get_precision(), self.get_recall(), self.get_f1()
+
+    def pprint(self):
+        headers = ['MUC'] * 3 + ['BCUBED'] * 3 + ['CEAF'] * 3
+        sub_headers = ['Prec.', 'Rec.', 'F1'] * 3
+        values = sum([[e.get_precision(), e.get_recall(), e.get_f1()] for e in self.evaluators], [])
+        str_values = ['{:.2f}'.format(x * 100) for x in values]
+        print(tabulate([headers, sub_headers, str_values], headers='firstrow'))
 
 class Evaluator(object):
     def __init__(self, metric, beta=1):

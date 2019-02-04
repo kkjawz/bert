@@ -1,0 +1,112 @@
+starts_loss_equalized 15000:
+	mention_starts_recall: 0.8823                                          
+	mention_starts_precision: 0.7390                                       
+	mention_ends_accuracy: 0.9193                                          
+	mention_clusters_recall: 0.7229                                        
+	mention_clusters_precision: 0.7012                                     
+	Average F1 (py): 65.14%                                                
+	Average precision (py): 70.15%                                         
+	Average recall (py): 62.26%    
+
+clusters_only_on_mentions 7000:
+	mention_starts_recall: 0.8829                                          
+	mention_starts_precision: 0.7344                                       
+	mention_ends_accuracy: 0.9248                                          
+	mention_clusters_recall: 0.7579                                        
+	mention_clusters_precision: 0.5225                                     
+	Average F1 (py): 63.60%                                                
+	Average precision (py): 65.28%                                         
+	Average recall (py): 63.58%
+
+clusters_only_on_mentions 20000:
+	mention_starts_recall: 0.8771                                          
+	mention_starts_precision: 0.7409                                       
+	mention_ends_accuracy: 0.9268                                          
+	mention_clusters_recall: 0.7716                                        
+	mention_clusters_precision: 0.5938                                     
+	Average F1 (py): 65.21%                                                
+	Average precision (py): 66.67%                                         
+	Average recall (py): 65.28%       
+
+outputs6 64000:
+	mention_starts_recall: 0.7860                                          
+	mention_starts_precision: 0.8403                                       
+	mention_ends_accuracy: 0.9079                                          
+	mention_clusters_recall: 0.7048                                        
+	mention_clusters_precision: 0.7108                                     
+	Average F1 (py): 65.01%                                                
+	Average precision (py): 72.38%                                         
+	Average recall (py): 60.30%
+
+bert_heavy 66000:
+	mention_starts_recall: 0.8536                                          
+	mention_starts_precision: 0.7807                                       
+	mention_ends_accuracy: 0.9283                                          
+	mention_clusters_recall: 0.7728                                        
+	mention_clusters_precision: 0.3498                                     
+	Average F1 (py): 67.15%                                                
+	Average precision (py): 71.53%                                         
+	Average recall (py): 64.44%                                            
+	MUC    MUC    MUC    BCUBED    BCUBED    BCUBED    CEAF    CEAF    CEAF                                                                       
+	-----  -----  -----  --------  --------  --------  ------  ------  ------                                                                     
+	Prec.  Rec.   F1     Prec.     Rec.      F1        Prec.   Rec.    F1  
+	74.82  75.92  75.37  67.45     69.54     68.48     72.30   47.87   57.60
+
+bert_heavy_no_overlap 49000:
+	mention_starts_recall: 0.8686                                          
+	mention_starts_precision: 0.7876                                       
+	mention_ends_accuracy: 0.9287                                          
+	mention_clusters_recall: 0.7841                                        
+	mention_clusters_precision: 0.4980                                     
+	Average F1 (py): 67.03%                                                
+	Average precision (py): 70.93%                                         
+	Average recall (py): 65.00%                                            
+	MUC    MUC    MUC    BCUBED    BCUBED    BCUBED    CEAF    CEAF    CEAF                                                                       
+	-----  -----  -----  --------  --------  --------  ------  ------  ------                                                                     
+	Prec.  Rec.   F1     Prec.     Rec.      F1        Prec.   Rec.    F1  
+	74.32  76.77  75.52  65.62     70.80     68.11     72.84   47.42   57.44 
+
+
+backreference_6 31000:
+mention_starts_recall: 87.48%                                                                                                                                                                                                                                                               
+mention_starts_precision: 84.39%                                                                                                                                                                                                                                                            
+mention_ends_accuracy: 91.43%                                                                                                                                                                                                                                                               
+mention_clusters_recall: 82.29%                                                                                                                                                                                                                                                             
+mention_clusters_precision: 82.29%                                                                                                                                                                                                                                                          
+Average F1 (py): 67.98%                                                                                                                                                                                                                                                                     
+Average precision (py): 73.17%                                                                                                                                                                                                                                                              
+Average recall (py): 64.44%                                                                                                                                                                                                                                                                 
+MUC    MUC    MUC    BCUBED    BCUBED    BCUBED    CEAF    CEAF    CEAF                                                                                                                                                                                                                     
+-----  -----  -----  --------  --------  --------  ------  ------  ------                                                                                                                                                                                                                   
+Prec.  Rec.   F1     Prec.     Rec.      F1        Prec.   Rec.    F1                                                                                                                                                                                                                       
+76.84  75.93  76.38  69.83     69.00     69.41     72.85   48.37   58.14
+
+
+lr_1e-5 53000:
+mention_starts_recall: 87.73%                                                                                                                 
+mention_starts_precision: 84.85%                                                                                                              
+mention_ends_accuracy: 90.98%                                                                                                                 
+mention_clusters_recall: 80.21%                                        
+mention_clusters_precision: 80.21%                                                                                                            
+Average F1 (py): 68.13%                                                                                                                                                                                                                                                                     
+Average precision (py): 73.28%                                                                                                                
+Average recall (py): 64.95%                                                                                                                   
+MUC    MUC    MUC    BCUBED    BCUBED    BCUBED    CEAF    CEAF    CEAF                                                                                                                                                                                                                     
+-----  -----  -----  --------  --------  --------  ------  ------  ------                                                                     
+Prec.  Rec.   F1     Prec.     Rec.      F1        Prec.   Rec.    F1                                                                         
+76.77  77.01  76.89  68.87     70.38     69.62     74.20   47.46   57.89  
+
+
+backreference_heavy_1e-5 38000:
+mention_starts_recall: 89.41%                      
+mention_starts_precision: 81.28%                   
+mention_ends_accuracy: 91.28%                      
+mention_clusters_recall: 82.81%                    
+mention_clusters_precision: 82.81%                 
+Average F1 (py): 69.65%                            
+Average precision (py): 74.11%                     
+Average recall (py): 66.81%                        
+MUC    MUC    MUC    BCUBED    BCUBED    BCUBED    CEAF    CEAF    CEAF                               
+-----  -----  -----  --------  --------  --------  ------  ------  ------                             
+Prec.  Rec.   F1     Prec.     Rec.      F1        Prec.   Rec.    F1                                 
+77.71  78.15  77.93  70.31     72.40     71.34     74.30   49.87   59.68

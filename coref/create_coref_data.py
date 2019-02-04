@@ -68,6 +68,9 @@ def write_examples_to_example_file(examples, tokenizer, max_seq_length, output_f
         input_mask[:len(input_ids)] = 1
         segment_ids = [0] * max_seq_length
 
+        speaker_ids = np.zeros(max_seq_length, np.int32)
+        speaker_ids[:len(example.speaker_ids)] = example.speaker_ids
+
         mention_starts = [0] * max_seq_length
         mention_ends_ids = [-1] * max_seq_length
         for gold_start, gold_end in zip(example.gold_starts, example.gold_ends):
@@ -84,6 +87,8 @@ def write_examples_to_example_file(examples, tokenizer, max_seq_length, output_f
         features["input_ids"] = create_int_feature(input_ids)
         features["input_mask"] = create_int_feature(input_mask)
         features["segment_ids"] = create_int_feature(segment_ids)
+        features["speaker_ids"] = create_int_feature(speaker_ids)
+        features["genre"] = create_int_feature([example.genre])
         features["mention_starts"] = create_int_feature(mention_starts)
         features["mention_ends_ids"] = create_int_feature(mention_ends_ids)
         features["mention_clusters"] = create_int_feature(mention_clusters.flatten())

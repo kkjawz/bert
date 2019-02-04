@@ -3,7 +3,7 @@ import tensorflow as tf
 
 import tokenization
 import numpy as np
-from coref.data import process_example, flatten, filter_embedded_mentions
+from coref.data import process_example, flatten, filter_embedded_mentions, filter_overlapping_mentions
 from visdom import Visdom
 
 flags = tf.flags
@@ -12,6 +12,11 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("input_file", None, "")
 flags.DEFINE_string("vocab_file", None, "")
+
+
+def get_num_overlapping_mentions(mentions):
+    starts = [m[0] for m in mentions]
+    return np.unique(starts, return_counts=True)[1]
 
 
 def main(_):
@@ -30,7 +35,9 @@ def main(_):
     token_lengths = []
     mention_distances = []
     n_mentions = []
+    n_overlapping_mentions = []
     n_filtered_mentions = 0
+    n_filtered_overlapping_mentions = 0
     total_mentions = 0
     for input_file in input_files:
         with open(input_file) as f:
@@ -39,7 +46,9 @@ def main(_):
         for json_e in json_examples:
             clusters = json_e["clusters"]
             gold_mentions = sorted(tuple(m) for m in flatten(clusters))
+            n_overlapping_mentions.extend(get_num_overlapping_mentions(gold_mentions))
             filtered_gold_mentions = filter_embedded_mentions(gold_mentions)
+            n_filtered_overlapping_mentions += len(filter_overlapping_mentions(gold_mentions))
 
             e = process_example(json_e)
             e = e.bertify(tokenizer)
@@ -62,9 +71,16 @@ def main(_):
     # viz.histogram(X=mention_distances, opts=dict(numbins=200, title='mention_distances'))
 
     mention_distances = np.array(mention_distances)
+    n_overlapping_mentions = np.array(n_overlapping_mentions)
     print('mention_distances > 256:', (mention_distances > 256).sum() / len(mention_distances))
     print('mention_distances > 512:', (mention_distances > 512).sum() / len(mention_distances))
     print('mention_distances > 1024:', (mention_distances > 1024).sum() / len(mention_distances))
+    print('max_overlapping_mentions:', max(n_overlapping_mentions))
+    print('n_overlapping_mentions == 2', (n_overlapping_mentions == 2).sum() / len(n_overlapping_mentions))
+    print('n_overlapping_mentions == 3', (n_overlapping_mentions == 3).sum() / len(n_overlapping_mentions))
+    print('n_overlapping_mentions == 4', (n_overlapping_mentions == 4).sum() / len(n_overlapping_mentions))
+    print('%overlapping_mentions:', (n_overlapping_mentions > 1).sum() / len(n_overlapping_mentions))
+    print('%filtered_overlapping_mentions:', n_filtered_overlapping_mentions / total_mentions)
     print('%filtered_mentions:', n_filtered_mentions / total_mentions)
 
 

@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import numpy as np
 import random
 
@@ -5,12 +7,13 @@ import tokenization
 
 
 class Example(object):
-    def __init__(self, tokens, gold_starts, gold_ends, speaker_ids, cluster_ids):
+    def __init__(self, tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, genre):
         self.tokens = tokens
         self.gold_starts = gold_starts
         self.gold_ends = gold_ends
         self.speaker_ids = speaker_ids
         self.cluster_ids = cluster_ids
+        self.genre = genre
 
     def truncate(self, start, size):
         # don't truncate in the middle of a mention
@@ -29,24 +32,30 @@ class Example(object):
         gold_ends = self.gold_ends[gold_spans] - start
         cluster_ids = self.cluster_ids[gold_spans]
 
-        return Example(tokens, gold_starts, gold_ends, speaker_ids, cluster_ids)
+        return Example(tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, self.genre)
 
     def bertify(self, tokenizer):
         bert_tokens = []
         orig_to_bert_map = []
-        for t in self.tokens:
+        orig_to_bert_end_map = []
+        bert_speaker_ids = []
+        for t, s in zip(self.tokens, self.speaker_ids):
+            bert_t = tokenizer.tokenize(t)
             orig_to_bert_map.append(len(bert_tokens))
-            bert_tokens.extend(tokenizer.tokenize(t))
+            orig_to_bert_end_map.append(len(bert_tokens) + len(bert_t) - 1)
+            bert_tokens.extend(bert_t)
+            bert_speaker_ids.extend([s] * len(bert_t))
 
         orig_to_bert_map = np.array(orig_to_bert_map)
+        orig_to_bert_end_map = np.array(orig_to_bert_end_map)
         if len(self.gold_starts):
             gold_starts = orig_to_bert_map[self.gold_starts]
-            gold_ends = orig_to_bert_map[self.gold_ends]
+            gold_ends = orig_to_bert_end_map[self.gold_ends]
         else:
             gold_starts = self.gold_starts
             gold_ends = self.gold_ends
 
-        return Example(bert_tokens, gold_starts, gold_ends, self.speaker_ids, self.cluster_ids)
+        return Example(bert_tokens, gold_starts, gold_ends, self.speaker_ids, self.cluster_ids, self.genre)
 
 
 def index_in_mention(index, mention):
@@ -70,6 +79,21 @@ def filter_embedded_mentions(mentions):
     return filtered
 
 
+def filter_overlapping_mentions(mentions):
+    start_to_mentions = defaultdict(list)
+    for m in mentions:
+        start_to_mentions[m[0]].append(m)
+
+    filtered_mentions = []
+    for ms in start_to_mentions.values():
+        if len(ms) > 1:
+            pass
+        max_mention = np.argmax([m[1] - m[0] for m in ms])
+        filtered_mentions.append(ms[max_mention])
+
+    return filtered_mentions
+
+
 def flatten(l):
     return [item for sublist in l for item in sublist]
 
@@ -82,12 +106,15 @@ def tensorize_mentions(mentions):
     return np.array(starts), np.array(ends)
 
 
+genres = {g: i for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
+
 def process_example(example, should_filter_embedded_mentions=False):
     clusters = example["clusters"]
 
     gold_mentions = sorted(tuple(m) for m in flatten(clusters))
     if should_filter_embedded_mentions:
-        gold_mentions = filter_embedded_mentions(gold_mentions)
+        gold_mentions = filter_overlapping_mentions(gold_mentions)
+        # gold_mentions = filter_embedded_mentions(gold_mentions)
     gold_mention_map = {m: i for i, m in enumerate(gold_mentions)}
     cluster_ids = np.zeros(len(gold_mentions))
     for cluster_id, cluster in enumerate(clusters):
@@ -109,9 +136,9 @@ def process_example(example, should_filter_embedded_mentions=False):
     speaker_ids = np.array([speaker_dict[s] for s in speakers])
 
     # TODO: genre
-    # doc_key = example["doc_key"]
-    # genre = self.genres[doc_key[:2]]
+    doc_key = example["doc_key"]
+    genre = genres[doc_key[:2]]
 
-    gold_starts, gold_ends = tensorize_mentions(gold_mentions)
+    gold_starts, gold_ends = tensorize_mentions(sorted(gold_mentions))
 
-    return Example(tokens, gold_starts, gold_ends, speaker_ids, cluster_ids)
+    return Example(tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, genre)

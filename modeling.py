@@ -698,7 +698,7 @@ def attention_scores_layer(from_tensor,
 
         # Since we are adding it to the raw scores before the softmax, this is
         # effectively the same as removing these entirely.
-        attention_scores += adder
+        attention_scores = attention_scores * tf.cast(attention_mask, tf.float32) + adder
 
     return attention_scores
 
