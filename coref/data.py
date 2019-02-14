@@ -7,13 +7,21 @@ import tokenization
 
 
 class Example(object):
-    def __init__(self, tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, genre):
+    def __init__(self, doc_key, tokens, sentence_tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, genre, document_index,
+                 offset=0, bert_to_orig_map=None):
+        assert len(tokens) == len(speaker_ids)
+
+        self.doc_key = doc_key
         self.tokens = tokens
+        self.sentence_tokens = sentence_tokens
         self.gold_starts = gold_starts
         self.gold_ends = gold_ends
         self.speaker_ids = speaker_ids
         self.cluster_ids = cluster_ids
         self.genre = genre
+        self.document_index = document_index
+        self.offset = offset
+        self.bert_to_orig_map = bert_to_orig_map
 
     def truncate(self, start, size):
         # don't truncate in the middle of a mention
@@ -26,15 +34,19 @@ class Example(object):
         end = start + size
 
         tokens = self.tokens[start:end]
+        sentence_tokens = None
         speaker_ids = self.speaker_ids[start:end]
         gold_spans = np.logical_and(self.gold_starts >= start, self.gold_ends < end)
         gold_starts = self.gold_starts[gold_spans] - start
         gold_ends = self.gold_ends[gold_spans] - start
         cluster_ids = self.cluster_ids[gold_spans]
 
-        return Example(tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, self.genre)
+        return Example(self.doc_key, tokens, sentence_tokens, gold_starts, gold_ends, speaker_ids, cluster_ids,
+                       self.genre, self.document_index, start)
 
     def bertify(self, tokenizer):
+        assert self.offset == 0
+
         bert_tokens = []
         orig_to_bert_map = []
         orig_to_bert_end_map = []
@@ -46,6 +58,12 @@ class Example(object):
             bert_tokens.extend(bert_t)
             bert_speaker_ids.extend([s] * len(bert_t))
 
+        bert_sentence_tokens = [tokenizer.tokenize(' '.join(s)) for s in self.sentence_tokens]
+
+        bert_to_orig_map = [-1] * len(bert_tokens)
+        for i, bert_i in enumerate(orig_to_bert_map):
+            bert_to_orig_map[bert_i] = i
+
         orig_to_bert_map = np.array(orig_to_bert_map)
         orig_to_bert_end_map = np.array(orig_to_bert_end_map)
         if len(self.gold_starts):
@@ -55,7 +73,18 @@ class Example(object):
             gold_starts = self.gold_starts
             gold_ends = self.gold_ends
 
-        return Example(bert_tokens, gold_starts, gold_ends, self.speaker_ids, self.cluster_ids, self.genre)
+        return Example(self.doc_key, bert_tokens, bert_sentence_tokens, gold_starts, gold_ends, bert_speaker_ids,
+                       self.cluster_ids, self.genre, self.document_index, bert_to_orig_map=bert_to_orig_map)
+
+    def unravel_token_index(self, token_index):
+        prev_sentences_len = 0
+        for i, s in enumerate(self.sentence_tokens):
+            if token_index < prev_sentences_len + len(s):
+                token_index_in_sentence = token_index - prev_sentences_len
+                return i, token_index_in_sentence
+            prev_sentences_len += len(s)
+
+        raise ValueError('token_index is out of range ({} >= {})', token_index, len(self.tokens))
 
 
 def index_in_mention(index, mention):
@@ -108,7 +137,7 @@ def tensorize_mentions(mentions):
 
 genres = {g: i for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
 
-def process_example(example, should_filter_embedded_mentions=False):
+def process_example(example, index, should_filter_embedded_mentions=False):
     clusters = example["clusters"]
 
     gold_mentions = sorted(tuple(m) for m in flatten(clusters))
@@ -128,9 +157,9 @@ def process_example(example, should_filter_embedded_mentions=False):
 
     assert num_words == len(speakers)
 
-    all_text = ' '.join(' '.join(s) for s in sentences)
-    all_text = tokenization.convert_to_unicode(all_text)
-    tokens = all_text.split(' ')
+    sentence_tokens = [[tokenization.convert_to_unicode(w) for w in s] for s in sentences]
+
+    tokens = sum(sentence_tokens, [])
 
     speaker_dict = {s: i for i, s in enumerate(set(speakers))}
     speaker_ids = np.array([speaker_dict[s] for s in speakers])
@@ -141,4 +170,4 @@ def process_example(example, should_filter_embedded_mentions=False):
 
     gold_starts, gold_ends = tensorize_mentions(sorted(gold_mentions))
 
-    return Example(tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, genre)
+    return Example(doc_key, tokens, sentence_tokens, gold_starts, gold_ends, speaker_ids, cluster_ids, genre, index)

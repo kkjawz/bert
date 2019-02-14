@@ -19,6 +19,8 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import math
+
 import json
 import random
 from tqdm import tqdm
@@ -92,6 +94,8 @@ def write_examples_to_example_file(examples, tokenizer, max_seq_length, output_f
         features["mention_starts"] = create_int_feature(mention_starts)
         features["mention_ends_ids"] = create_int_feature(mention_ends_ids)
         features["mention_clusters"] = create_int_feature(mention_clusters.flatten())
+        features["document_index"] = create_int_feature([example.document_index])
+        features["document_offset"] = create_int_feature([example.offset])
 
         tf_example = tf.train.Example(features=tf.train.Features(feature=features))
 
@@ -134,17 +138,18 @@ def create_examples(input_file, tokenizer, max_seq_length, dupe_factor, rng):
     with open(input_file) as f:
         json_examples = [json.loads(jsonline) for jsonline in f.readlines()]
 
-    for json_e in tqdm(json_examples, desc='Creating Examples'):
-        example = process_example(json_e, should_filter_embedded_mentions=True).bertify(tokenizer)
+    for i, json_e in enumerate(tqdm(json_examples, desc='Creating Examples')):
+        example = process_example(json_e, i, should_filter_embedded_mentions=True).bertify(tokenizer)
 
         # Account for [CLS], [SEP], [SEP]
         max_num_tokens = max_seq_length - 3
 
-        n_duplicates = max(len(example.tokens) // dupe_factor, 1)
         if len(example.tokens) > max_num_tokens:
+            n_duplicates = math.ceil((len(example.tokens) - max_num_tokens) / dupe_factor) + 1
             for i in range(n_duplicates):
                 # truncate tokens
-                start = rng.randint(0, len(example.tokens) - max_num_tokens)
+                # start = rng.randint(0, len(example.tokens) - max_num_tokens)
+                start = i * dupe_factor
                 examples.append(example.truncate(start, max_num_tokens))
         else:
             examples.append(example)

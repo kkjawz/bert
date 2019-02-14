@@ -50,7 +50,7 @@ def main(_):
             filtered_gold_mentions = filter_embedded_mentions(gold_mentions)
             n_filtered_overlapping_mentions += len(filter_overlapping_mentions(gold_mentions))
 
-            e = process_example(json_e)
+            e = process_example(json_e, 0)
             e = e.bertify(tokenizer)
             n_mentions.append(len(e.gold_starts))
             n_filtered_mentions += len(filtered_gold_mentions)

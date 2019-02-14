@@ -568,7 +568,8 @@ def attention_scores_layer(from_tensor,
                            batch_size=None,
                            from_seq_length=None,
                            to_seq_length=None,
-                           query_equals_key=False):
+                           query_equals_key=False,
+                           return_features=False):
     """Calculate multi-headed attention probabilities from `from_tensor` to `to_tensor`.
 
     This is an implementation of multi-headed attention based on "Attention
@@ -700,7 +701,10 @@ def attention_scores_layer(from_tensor,
         # effectively the same as removing these entirely.
         attention_scores = attention_scores * tf.cast(attention_mask, tf.float32) + adder
 
-    return attention_scores
+    if return_features:
+        return attention_scores, query_layer, key_layer
+    else:
+        return attention_scores
 
 
 def attention_layer(from_tensor,
